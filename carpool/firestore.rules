@@ -18,8 +18,9 @@ service cloud.firestore {
         && d.createdAt is string && d.createdAt.size() <= 40;
     }
 
+    // `weight` is optional: how many legs each drive on that day counts as (missing means 1).
     function validRide(rideId, d) {
-      return d.keys().hasOnly(['date', 'to', 'home', 'cancelled', 'note', 'updatedAt'])
+      return d.keys().hasOnly(['date', 'to', 'home', 'cancelled', 'note', 'updatedAt', 'weight'])
         && d.keys().hasAll(['date', 'to', 'home', 'cancelled', 'note'])
         && rideId.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
         && d.date == rideId
@@ -27,7 +28,8 @@ service cloud.firestore {
         && d.home is string && d.home.size() <= 40
         && d.cancelled is bool
         && d.note is string && d.note.size() <= 500
-        && (!('updatedAt' in d) || (d.updatedAt is string && d.updatedAt.size() <= 40));
+        && (!('updatedAt' in d) || (d.updatedAt is string && d.updatedAt.size() <= 40))
+        && (!('weight' in d) || (d.weight is number && d.weight >= 0.5 && d.weight <= 5));
     }
 
     // A change-log entry. `at` must be the server's time of the write, so it can't be backdated.

@@ -92,6 +92,7 @@ textarea { width: 100%; min-height: 70px; resize: vertical; }
 .shead { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); border-bottom: 2px solid var(--line); }
 .srow { border-bottom: 1px solid var(--line); }
 .srow .date { font-weight: 700; }
+.wt { display: inline-block; font-size: 12px; font-weight: 700; color: var(--accent); margin-left: 4px; }
 .srow .date small { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
 .srow.past { opacity: .5; }
 .srow.isnext { background: var(--accent-soft); border-radius: 8px; border-bottom-color: transparent; }
@@ -279,6 +280,11 @@ async function write(fn, okMsg) {
 const rideData = r => { const d = Object.assign({}, r); delete d.id; return d; };
 // New version of a ride: its latest data (not the copy a dialog was opened with) plus `patch`.
 const edited = (r, patch) => Object.assign(rideData(rides.find(x => x.id === r.id) || r), patch, { updatedAt: new Date().toISOString() });
+// A ride's weight: how many legs each of its two drives counts as (1 when not set).
+const W_MIN = 0.5, W_MAX = 5;
+const weightOf = r => typeof r.weight === "number" ? r.weight : 1;
+const fmtN = n => String(Math.round(n * 10) / 10);
+const wTag = r => weightOf(r) !== 1 ? h("span", { class: "wt", title: "Counts as " + fmtN(weightOf(r)) + " rides", text: "×" + fmtN(weightOf(r)) }) : null;
 const legName = leg => leg === "to" ? "drive there" : "drive back";
 const quote = s => "“" + (s.length > 80 ? s.slice(0, 79) + "…" : s) + "”";
 
@@ -374,7 +380,8 @@ function tally() {
   const today = todayStr();
   rides.forEach(r => {
     if (r.cancelled) return;
-    ["to", "home"].forEach(leg => { const id = r[leg]; if (!id || !t[id]) return; if (r.date < today) t[id].done++; else t[id].up++; });
+    const w = weightOf(r);
+    ["to", "home"].forEach(leg => { const id = r[leg]; if (!id || !t[id]) return; if (r.date < today) t[id].done += w; else t[id].up += w; });
   });
   return t;
 }
@@ -387,7 +394,8 @@ function planRebalance() {
   act.forEach((p, i) => { total[p.id] = 0; toN[p.id] = 0; last[p.id] = -1 - i; });
   rides.forEach((r, i) => {
     if (r.cancelled || r.date >= today) return;
-    ["to", "home"].forEach(leg => { if (total[r[leg]] != null) { total[r[leg]]++; if (leg === "to") toN[r[leg]]++; last[r[leg]] = i; } });
+    const w = weightOf(r);
+    ["to", "home"].forEach(leg => { if (total[r[leg]] != null) { total[r[leg]] += w; if (leg === "to") toN[r[leg]] += w; last[r[leg]] = i; } });
   });
   const order = act.map(p => p.id), changes = [];
   rides.forEach((r, i) => {
@@ -395,7 +403,8 @@ function planRebalance() {
     const ranked = order.slice().sort((a, b) => total[a] - total[b] || last[a] - last[b] || order.indexOf(a) - order.indexOf(b));
     let [a, b] = ranked;
     let to = toN[a] <= toN[b] ? a : b, home = to === a ? b : a;
-    total[a]++; total[b]++; toN[to]++; last[a] = i; last[b] = i;
+    const w = weightOf(r);
+    total[a] += w; total[b] += w; toN[to] += w; last[a] = i; last[b] = i;
     if (r.to !== to || r.home !== home) changes.push({ id: r.id, to, home });
   });
   return changes;
@@ -477,7 +486,7 @@ function renderNext() {
   const c = cp();
   card.append(
     h("div", { class: "row", style: "justify-content:space-between" }, h("h2", { id: "nextH", text: "Next ride" }), h("span", { class: "pill", text: rel })),
-    h("div", { class: "when", text: fmtLong(nx.date) }),
+    h("div", { class: "when" }, fmtLong(nx.date), wTag(nx)),
     h("div", { class: "legs" },
       h("div", { class: "leg" }, h("div", { class: "lbl", text: "Drives there" + (c.startTime ? " · for " + fmtTime(c.startTime) : "") }), h("div", { class: "who", text: pname(nx.to) })),
       h("div", { class: "leg" }, h("div", { class: "lbl", text: "Drives back" + (c.endTime ? " · at " + fmtTime(c.endTime) : "") }), h("div", { class: "who", text: pname(nx.home) }))),
@@ -498,12 +507,12 @@ function renderTally() {
     const cls = Math.abs(d) < 1 ? "even" : d > 0 ? "over" : "under";
     sec.append(h("div", { class: "trow" },
       h("div", { class: "name", text: p.name }),
-      h("div", { class: "bar", role: "img", "aria-label": p.name + ": " + x.done + " driven, " + x.up + " coming up" },
+      h("div", { class: "bar", role: "img", "aria-label": p.name + ": " + fmtN(x.done) + " driven, " + fmtN(x.up) + " coming up" },
         h("div", { class: "done", style: "width:" + (x.done / max * 100) + "%" }), h("div", { class: "up", style: "width:" + (x.up / max * 100) + "%" })),
-      h("div", { class: "fig num" }, tot + " legs", h("span", { class: "diff " + cls, text: Math.abs(d) < 1 ? "even" : (d > 0 ? "+" : "") + d }))));
+      h("div", { class: "fig num" }, fmtN(tot) + " legs", h("span", { class: "diff " + cls, text: Math.abs(d) < 1 ? "even" : (d > 0 ? "+" : "") + d }))));
   });
-  const spread = totals.length ? Math.max(...totals) - Math.min(...totals) : 0;
-  if (spread >= 2) sec.append(h("p", { class: "help" }, "Totals are " + spread + " legs apart. ", h("button", { class: "linkish", onclick: openRebalance, text: "Rebalance upcoming rides" })));
+  const spread = totals.length ? Math.round((Math.max(...totals) - Math.min(...totals)) * 1e6) / 1e6 : 0;
+  if (spread >= 2) sec.append(h("p", { class: "help" }, "Totals are " + fmtN(spread) + " legs apart. ", h("button", { class: "linkish", onclick: openRebalance, text: "Rebalance upcoming rides" })));
   return sec;
 }
 
@@ -523,7 +532,7 @@ function renderSchedule() {
   rides.forEach(r => {
     const past = r.date < today, isNext = nx && nx.id === r.id;
     const row = h("div", { class: "srow" + (past ? " past" : "") + (isNext ? " isnext" : "") + (r.cancelled ? " cancelled" : "") },
-      h("div", { class: "date num" }, fmtShort(r.date), h("small", { text: r.cancelled ? "No practice" : past ? "Done" : isNext ? "Next up" : "" })));
+      h("div", { class: "date num" }, fmtShort(r.date), wTag(r), h("small", { text: r.cancelled ? "No practice" : past ? "Done" : isNext ? "Next up" : "" })));
     if (r.cancelled) row.append(h("div", { class: "chips", text: "Skipped" }));
     else {
       const off = activeParents().filter(p => p.id !== r.to && p.id !== r.home).map(p => p.name).join(", ");
@@ -601,6 +610,8 @@ async function onChip(r, leg) {
 function openRide(r) {
   const note = h("textarea", { id: "noteIn", maxlength: "500", placeholder: "e.g. One kid is out sick, no pickup needed", value: r.note || "" });
   const skip = h("input", { type: "checkbox", id: "skipIn", checked: !!r.cancelled });
+  const wIn = h("input", { type: "number", id: "weightIn", min: String(W_MIN), max: String(W_MAX), step: "0.5", value: String(weightOf(r)), style: "width:90px" });
+  const err = h("p", { class: "status err", hidden: true });
   openDlg(
     h("h3", { text: fmtLong(r.date) }),
     h("label", { class: "field", for: "noteIn" }, "Note for the drivers", note),
@@ -609,6 +620,9 @@ function openRide(r) {
       closeDlg(); await change([[r.id, edited(r, { note: "" })]], "note", fmtMD(r.date) + ": note removed (was " + quote(r.note) + ")", "Note removed.");
     }, text: "Remove note" })) : null,
     h("p", { class: "help", text: "Skipped days stay on the list but don't count toward anyone's total." }),
+    h("div", { class: "row" }, h("label", { class: "field", for: "weightIn" }, "Counts as", h("span", { class: "row" }, wIn, h("span", { class: "help", text: "rides" })))),
+    h("p", { class: "help", text: "For a longer or harder trip, e.g. 2 makes each leg count double in the totals. Leave at 1 for a normal ride." }),
+    err,
     h("div", { class: "row", style: "justify-content:space-between" },
       h("button", { class: "btn danger", onclick: () => confirmBox("Remove " + fmtShort(r.date) + " from the season?", "Remove date", async () => {
         await change([[r.id, null]], "remove-date", "Removed " + fmtMD(r.date) + (r.cancelled ? " (no practice)" : " (" + pname(r.to) + " there, " + pname(r.home) + " back)"), "Date removed.");
@@ -616,13 +630,21 @@ function openRide(r) {
       h("div", { class: "row" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }),
         h("button", { class: "btn primary", onclick: async () => {
           const data = {}, parts = [], was = r.note || "";
+          const wNew = wIn.value.trim() === "" ? 1 : Number(wIn.value), wOld = weightOf(r);
+          if (!Number.isFinite(wNew) || wNew < W_MIN || wNew > W_MAX) { err.hidden = false; err.textContent = "“Counts as” must be a number from " + W_MIN + " to " + W_MAX + "."; wIn.focus(); return; }
           if (was !== note.value) {
             data.note = note.value;
             parts.push(!was ? "note added: " + quote(note.value) : !note.value ? "note removed (was " + quote(was) + ")" : "note changed to " + quote(note.value));
           }
           if (!!r.cancelled !== skip.checked) { data.cancelled = skip.checked; parts.push(skip.checked ? "marked as no practice" : "back on, practice is happening"); }
+          const wChanged = wNew !== wOld;
+          if (wChanged) parts.push("counts as ×" + fmtN(wNew) + " (was ×" + fmtN(wOld) + ")");
           closeDlg();
-          if (parts.length) await change([[r.id, edited(r, data)]], "note" in data && "cancelled" in data ? "note+skip" : "note" in data ? "note" : "skip", fmtMD(r.date) + ": " + parts.join("; "), "Saved.");
+          if (!parts.length) return;
+          const after = edited(r, wChanged ? Object.assign(data, { weight: wNew }) : data);
+          if (after.weight === 1) delete after.weight; // a weight of 1 is stored as no weight at all
+          const kind = ["note", "cancelled", "weight"].filter(k => k in data).map(k => k === "cancelled" ? "skip" : k).join("+");
+          await change([[r.id, after]], kind, fmtMD(r.date) + ": " + parts.join("; "), "Saved.");
         }, text: "Save" }))));
 }
 
