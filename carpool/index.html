@@ -129,6 +129,10 @@ dialog::backdrop { background: rgba(0,0,0,.4); }
 .help { font-size: 13px; color: var(--muted); }
 details summary { cursor: pointer; font-weight: 700; }
 .kids { display: grid; gap: 4px; font-size: 14px; }
+.log { list-style: none; margin: 8px 0 0; padding: 0; }
+.log li { padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 15px; overflow-wrap: anywhere; }
+.log li:last-child { border-bottom: none; padding-bottom: 0; }
+.log .when { font-size: 12px; color: var(--muted); }
 
 @media (max-width: 600px) {
   .shead { display: none; }
@@ -141,6 +145,7 @@ details summary { cursor: pointer; font-weight: 700; }
   .mlabel { display: block; }
   .trow { grid-template-columns: 80px 1fr; }
   .trow .fig { grid-column: 1 / 3; text-align: left; }
+  .log li { font-size: 14px; padding: 5px 0; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
@@ -162,7 +167,7 @@ details summary { cursor: pointer; font-weight: 700; }
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getFirestore, doc, collection, onSnapshot, setDoc, updateDoc, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getFirestore, doc, collection, onSnapshot, writeBatch, deleteField, serverTimestamp, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
 
 // ---------- helpers ----------
@@ -189,6 +194,8 @@ const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function fmtShort(s) { const d = parseD(s); return DOW[d.getDay()] + " " + (d.getMonth() + 1) + "/" + d.getDate(); }
 function fmtLong(s) { const d = parseD(s); return ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][d.getDay()] + ", " + MON[d.getMonth()] + " " + d.getDate(); }
+function fmtMD(s) { const d = parseD(s); return MON[d.getMonth()] + " " + d.getDate(); }
+function fmtStamp(d) { if (!d) return ""; const H = d.getHours(); return DOW[d.getDay()] + " " + (d.getMonth() + 1) + "/" + d.getDate() + ", " + (H % 12 || 12) + ":" + pad(d.getMinutes()) + (H >= 12 ? "pm" : "am"); }
 function fmtTime(t) { if (!t) return ""; let [H, M] = t.split(":").map(Number); const ap = H >= 12 ? "pm" : "am"; H = H % 12 || 12; return H + (M ? ":" + pad(M) : "") + ap; }
 function daysUntil(s) { return Math.round((parseD(s) - parseD(todayStr())) / 86400000); }
 function uid(p) { return p + Math.random().toString(36).slice(2, 9); }
@@ -214,7 +221,8 @@ let currentId = null;         // from location.hash
 let carpool = null, carpoolLoaded = false;
 let rides = [];               // [{id, ...data}] for current carpool, sorted by date
 let ridesLoaded = false, loadError = null;
-let unsubCarpool = null, unsubRides = null;
+let logEntries = [], logError = null; // latest 20 change-log entries, newest first
+let unsubCarpool = null, unsubRides = null, unsubLog = null;
 let swapFrom = null;          // {rideId, leg}
 const dlg = document.getElementById("dlg"), dlgBody = document.getElementById("dlgBody");
 
@@ -223,7 +231,6 @@ const parents = () => (cp() && Array.isArray(cp().parents)) ? cp().parents : [];
 const activeParents = () => parents().filter(p => p.active !== false);
 const pname = id => { const p = parents().find(x => x.id === id); return p ? (p.name || "Unnamed") : "—"; };
 const meId = () => load("cp.me." + currentId);
-const rideRef = id => doc(db, "carpools", currentId, "rides", id);
 
 // ---------- data ----------
 function idFromHash() {
@@ -236,8 +243,10 @@ function idFromHash() {
 function openFromHash() {
   if (unsubCarpool) unsubCarpool();
   if (unsubRides) unsubRides();
-  unsubCarpool = unsubRides = null;
+  if (unsubLog) unsubLog();
+  unsubCarpool = unsubRides = unsubLog = null;
   currentId = idFromHash(); carpool = null; carpoolLoaded = false; rides = []; ridesLoaded = false; loadError = null; swapFrom = null;
+  logEntries = []; logError = null;
   lastUndo = null; document.querySelectorAll(".toast").forEach(t => t.remove());
   closeDlg();
   render();
@@ -253,6 +262,9 @@ function openFromHash() {
     rides = snap.docs.map(d => Object.assign({ id: d.id }, d.data())).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
     ridesLoaded = true; render();
   }, e => { loadError = "Couldn't load rides (" + e.code + ")."; render(); });
+  unsubLog = onSnapshot(query(collection(db, "carpools", id, "log"), orderBy("at", "desc"), limit(20)), snap => {
+    logEntries = snap.docs.map(d => d.data({ serverTimestamps: "estimate" })); logError = null; render();
+  }, e => { logError = e.code; render(); });
 }
 window.addEventListener("hashchange", openFromHash);
 
@@ -264,29 +276,96 @@ async function write(fn, okMsg) {
     return false;
   }
 }
-const updRide = (id, data) => updateDoc(rideRef(id), Object.assign({}, data, { updatedAt: new Date().toISOString() }));
+const rideData = r => { const d = Object.assign({}, r); delete d.id; return d; };
+// New version of a ride: its latest data (not the copy a dialog was opened with) plus `patch`.
+const edited = (r, patch) => Object.assign(rideData(rides.find(x => x.id === r.id) || r), patch, { updatedAt: new Date().toISOString() });
+const legName = leg => leg === "to" ? "drive there" : "drive back";
+const quote = s => "“" + (s.length > 80 ? s.slice(0, 79) + "…" : s) + "”";
 
-// One level of undo: before a change, remember the rides it touches exactly as they were
-// (null for a ride that didn't exist yet), and put them back if Undo is pressed.
-let lastUndo = null;          // {cid, before: [[rideId, data | null]]}
-async function change(rideIds, fn, okMsg) {
-  const before = rideIds.map(id => { const r = rides.find(x => x.id === id); if (!r) return [id, null]; const data = Object.assign({}, r); delete data.id; return [id, data]; });
-  const cid = currentId;
-  if (!await write(fn)) return false;
-  const u = lastUndo = { cid, before };
-  toast(okMsg, () => undo(u));
+// Fields that differ between two versions of a document (either may be null).
+// Compared with keys sorted, since Firestore doesn't keep the key order of maps.
+const canon = v => JSON.stringify(v, (k, x) => x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map(key => [key, x[key]])) : x);
+function changedKeys(a, b, skip) {
+  return [...new Set([...Object.keys(a || {}), ...Object.keys(b || {})])].filter(k => k !== skip && canon((a || {})[k]) !== canon((b || {})[k]));
+}
+const pick = (o, keys) => o ? Object.fromEntries(keys.filter(k => k in o).map(k => [k, o[k]])) : null;
+
+// The change log records who made a change by the viewer's "I am…" choice, if any.
+function byName() { const p = parents().find(x => x.id === meId()); return p ? p.name : ""; }
+const logEntry = (kind, summary, changes) => ({ at: serverTimestamp(), by: byName(), kind, summary: summary.slice(0, 1000), changes });
+const newLogRef = cid => doc(collection(db, "carpools", cid, "log"));
+
+// Every ride change goes through here: `next` lists the new version of each ride it touches
+// ([rideId, data], data null to delete). The rides and a log entry are written in one batch.
+// One level of undo: the rides' previous versions are kept and put back exactly if Undo is pressed.
+let lastUndo = null;          // {cid, before: [[rideId, data | null]], summary}
+async function change(next, kind, summary, okMsg, canUndo = true) {
+  const cid = currentId, wb = writeBatch(db), changes = [];
+  const before = next.map(([id]) => { const r = rides.find(x => x.id === id); return [id, r ? rideData(r) : null]; });
+  next.forEach(([id, after], i) => {
+    const prev = before[i][1], ref = doc(db, "carpools", cid, "rides", id);
+    if (!after) { if (prev) wb.delete(ref); }
+    else if (!prev) wb.set(ref, after);
+    else {
+      const keys = changedKeys(prev, after);
+      if (keys.length) wb.update(ref, Object.fromEntries(keys.map(k => [k, k in after ? after[k] : deleteField()])));
+    }
+    const keys = prev && after ? changedKeys(prev, after, "updatedAt") : null;
+    changes.push({ doc: "rides/" + id, before: keys ? pick(prev, keys) : prev, after: keys ? pick(after, keys) : after });
+  });
+  wb.set(newLogRef(cid), logEntry(kind, summary, changes));
+  if (!await write(() => wb.commit())) return false;
+  if (canUndo) { const u = lastUndo = { cid, before, summary }; toast(okMsg, () => undo(u)); }
+  else toast(okMsg);
   return true;
 }
 async function undo(u) {
-  if (lastUndo !== u) return;
+  if (lastUndo !== u || u.cid !== currentId) return;
   lastUndo = null;
-  await write(() => {
-    const wb = writeBatch(db);
-    for (const [id, data] of u.before) { const ref = doc(db, "carpools", u.cid, "rides", id); if (data) wb.set(ref, data); else wb.delete(ref); }
-    return wb.commit();
-  }, "Undone.");
+  await change(u.before, "undo", "Undid: " + u.summary, "Undone.", false);
 }
-const updCarpool = data => updateDoc(doc(db, "carpools", currentId), data);
+
+// Settings: update only the carpool fields that changed, with a log entry, in one batch.
+async function changeCarpool(patch) {
+  const c = cp(), keys = changedKeys(pick(c, Object.keys(patch)), patch);
+  if (!keys.length) { toast("No changes to save."); return; }
+  const cid = currentId, wb = writeBatch(db);
+  wb.update(doc(db, "carpools", cid), pick(patch, keys));
+  wb.set(newLogRef(cid), logEntry("settings", settingsSummary(c, patch, keys), [{ doc: "carpool", before: pick(c, keys), after: pick(patch, keys) }]));
+  await write(() => wb.commit(), "Settings saved.");
+}
+
+function settingsSummary(c, patch, keys) {
+  const parts = [];
+  if (keys.includes("name")) parts.push("name changed to " + quote(patch.name));
+  if (keys.includes("location")) parts.push(patch.location ? "location changed to " + quote(patch.location) : "location cleared");
+  if (keys.includes("startTime") || keys.includes("endTime")) parts.push("times changed to " + ([fmtTime(patch.startTime), fmtTime(patch.endTime)].filter(Boolean).join("–") || "none"));
+  if (keys.includes("parents")) {
+    const was = c.parents || [], now = patch.parents;
+    now.forEach(p => {
+      const o = was.find(x => x.id === p.id);
+      if (!o) parts.push("added " + p.name + " as a parent");
+      else {
+        if (o.name !== p.name) parts.push(o.name + " renamed to " + p.name);
+        if ((o.active !== false) !== p.active) parts.push(p.name + (p.active ? " is driving again" : " stopped driving"));
+      }
+    });
+    was.filter(o => !now.some(p => p.id === o.id)).forEach(o => parts.push("removed " + o.name));
+  }
+  if (keys.includes("kids")) {
+    const was = c.kids || [], now = patch.kids;
+    now.forEach(k => {
+      const o = was.find(x => x.id === k.id);
+      if (!o) parts.push("added " + k.name);
+      else {
+        if (o.name !== k.name) parts.push(o.name + " renamed to " + k.name);
+        if ((o.address || "") !== k.address) parts.push("pickup address changed for " + k.name);
+      }
+    });
+    was.filter(o => !now.some(k => k.id === o.id)).forEach(o => parts.push("removed " + o.name));
+  }
+  return "Settings: " + (parts.join("; ") || "updated");
+}
 
 // ---------- logic ----------
 function tally() {
@@ -376,7 +455,17 @@ function render() {
       h("button", { class: "btn small", onclick: () => { swapFrom = null; render(); }, text: "Cancel" })));
   }
 
-  main.append(renderNext(), renderTally(), renderSchedule(), renderKids());
+  main.append(renderNext(), renderTally(), renderSchedule(), renderKids(), renderLog());
+}
+
+function renderLog() {
+  const sec = h("section", { class: "card", "aria-labelledby": "logH" }, h("h2", { id: "logH", text: "Recent changes" }));
+  if (logError) sec.append(h("p", { class: "help", text: "The change log can't be loaded (" + logError + ")." }));
+  else if (!logEntries.length) sec.append(h("p", { class: "help", text: "No changes yet. Edits show up here, newest first." }));
+  else sec.append(h("ol", { class: "log" }, logEntries.map(e => h("li", null,
+    h("div", { text: e.summary }),
+    h("div", { class: "when", text: fmtStamp(e.at && e.at.toDate ? e.at.toDate() : null) + " · by " + (e.by || "someone with the link") })))));
+  return sec;
 }
 
 function renderNext() {
@@ -484,14 +573,13 @@ async function onChip(r, leg) {
     if (!a || (a.id === b.id && la === lb)) { render(); return; }
     const pa = a[la], pb = b[lb];
     if (pa === pb) { render(); toast("Same driver on both rides, nothing to swap."); return; }
-    if (a.id === b.id) { await change([a.id], () => updRide(a.id, { [la]: pb, [lb]: pa }), "Swapped."); return; }
-    const now = new Date().toISOString();
-    await change([a.id, b.id], () => {
-      const wb = writeBatch(db);
-      wb.update(rideRef(a.id), { [la]: pb, updatedAt: now });
-      wb.update(rideRef(b.id), { [lb]: pa, updatedAt: now });
-      return wb.commit();
-    }, pname(pa) + " and " + pname(pb) + " traded rides.");
+    if (a.id === b.id) {
+      await change([[a.id, edited(a, { [la]: pb, [lb]: pa })]], "swap", pname(pa) + " and " + pname(pb) + " swapped legs on " + fmtMD(a.date), "Swapped.");
+      return;
+    }
+    await change([[a.id, edited(a, { [la]: pb })], [b.id, edited(b, { [lb]: pa })]], "trade",
+      pname(pa) + " and " + pname(pb) + " traded: " + pname(pb) + " takes the " + fmtMD(a.date) + " " + legName(la) + ", " + pname(pa) + " takes the " + fmtMD(b.date) + " " + legName(lb),
+      pname(pa) + " and " + pname(pb) + " traded rides.");
     return;
   }
   const cur = r[leg];
@@ -502,7 +590,9 @@ async function onChip(r, leg) {
       class: "btn" + (p.id === cur ? " current" : ""), "aria-pressed": p.id === cur ? "true" : "false",
       onclick: async () => {
         if (p.id === cur) { closeDlg(); return; }
-        closeDlg(); await change([r.id], () => updRide(r.id, { [leg]: p.id }), p.name + " is driving " + (leg === "to" ? "there" : "back") + " on " + fmtShort(r.date) + ".");
+        closeDlg();
+        await change([[r.id, edited(r, { [leg]: p.id })]], "reassign", p.name + " took the " + fmtMD(r.date) + " " + legName(leg) + (cur ? " from " + pname(cur) : ""),
+          p.name + " is driving " + (leg === "to" ? "there" : "back") + " on " + fmtShort(r.date) + ".");
       }, text: p.name }))),
     h("div", { class: "row" }, h("button", { class: "btn", onclick: () => { swapFrom = { rideId: r.id, leg }; closeDlg(); render(); }, text: "Trade with another ride…" })),
     h("div", { class: "row end" }, h("button", { class: "btn", onclick: closeDlg, text: "Close" })));
@@ -515,14 +605,24 @@ function openRide(r) {
     h("h3", { text: fmtLong(r.date) }),
     h("label", { class: "field", for: "noteIn" }, "Note for the drivers", note),
     h("label", { class: "row", for: "skipIn" }, skip, "No practice this day (skip it)"),
-    r.note ? h("div", { class: "row" }, h("button", { class: "btn small", onclick: async () => { closeDlg(); await change([r.id], () => updRide(r.id, { note: "" }), "Note removed."); }, text: "Remove note" })) : null,
+    r.note ? h("div", { class: "row" }, h("button", { class: "btn small", onclick: async () => {
+      closeDlg(); await change([[r.id, edited(r, { note: "" })]], "note", fmtMD(r.date) + ": note removed (was " + quote(r.note) + ")", "Note removed.");
+    }, text: "Remove note" })) : null,
     h("p", { class: "help", text: "Skipped days stay on the list but don't count toward anyone's total." }),
     h("div", { class: "row", style: "justify-content:space-between" },
-      h("button", { class: "btn danger", onclick: () => confirmBox("Remove " + fmtShort(r.date) + " from the season?", "Remove date", async () => { await change([r.id], () => deleteDoc(rideRef(r.id)), "Date removed."); }), text: "Remove date" }),
+      h("button", { class: "btn danger", onclick: () => confirmBox("Remove " + fmtShort(r.date) + " from the season?", "Remove date", async () => {
+        await change([[r.id, null]], "remove-date", "Removed " + fmtMD(r.date) + (r.cancelled ? " (no practice)" : " (" + pname(r.to) + " there, " + pname(r.home) + " back)"), "Date removed.");
+      }), text: "Remove date" }),
       h("div", { class: "row" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }),
         h("button", { class: "btn primary", onclick: async () => {
-          const data = {}; if ((r.note || "") !== note.value) data.note = note.value; if (!!r.cancelled !== skip.checked) data.cancelled = skip.checked;
-          closeDlg(); if (Object.keys(data).length) await change([r.id], () => updRide(r.id, data), "Saved.");
+          const data = {}, parts = [], was = r.note || "";
+          if (was !== note.value) {
+            data.note = note.value;
+            parts.push(!was ? "note added: " + quote(note.value) : !note.value ? "note removed (was " + quote(was) + ")" : "note changed to " + quote(note.value));
+          }
+          if (!!r.cancelled !== skip.checked) { data.cancelled = skip.checked; parts.push(skip.checked ? "marked as no practice" : "back on, practice is happening"); }
+          closeDlg();
+          if (parts.length) await change([[r.id, edited(r, data)]], "note" in data && "cancelled" in data ? "note+skip" : "note" in data ? "note" : "skip", fmtMD(r.date) + ": " + parts.join("; "), "Saved.");
         }, text: "Save" }))));
 }
 
@@ -544,7 +644,9 @@ function openAddDate() {
     h("div", { class: "row end" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }), h("button", { class: "btn primary", onclick: async () => {
       if (!d.value) { err.textContent = "Pick a date."; return; }
       if (rides.some(x => x.id === d.value)) { err.textContent = "That date is already on the schedule."; return; }
-      closeDlg(); await change([d.value], () => setDoc(rideRef(d.value), { date: d.value, to: to.value, home: home.value, cancelled: false, note: "", updatedAt: new Date().toISOString() }), fmtShort(d.value) + " added.");
+      closeDlg();
+      await change([[d.value, { date: d.value, to: to.value, home: home.value, cancelled: false, note: "", updatedAt: new Date().toISOString() }]], "add-date",
+        "Added " + fmtMD(d.value) + " (" + pname(to.value) + " there, " + pname(home.value) + " back)", fmtShort(d.value) + " added.");
     }, text: "Add" })));
 }
 
@@ -556,12 +658,8 @@ function openRebalance() {
     h("div", { class: "kids" }, ch.slice(0, 8).map(c => { const r = rides.find(x => x.id === c.id); return h("div", { class: "num", text: fmtShort(r.date) + ": " + pname(c.to) + " there, " + pname(c.home) + " back" }); }), ch.length > 8 ? h("div", { class: "help", text: "…and " + (ch.length - 8) + " more" }) : null),
     h("div", { class: "row end" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }), h("button", { class: "btn primary", onclick: async () => {
       closeDlg();
-      const now = new Date().toISOString();
-      await change(ch.map(c => c.id), () => {
-        const wb = writeBatch(db);
-        for (const c of ch) wb.update(rideRef(c.id), { to: c.to, home: c.home, updatedAt: now });
-        return wb.commit();
-      }, "Upcoming rides rebalanced.");
+      await change(ch.map(c => [c.id, edited(rides.find(x => x.id === c.id), { to: c.to, home: c.home })]), "rebalance",
+        "Rebalanced " + ch.length + " upcoming ride" + (ch.length > 1 ? "s" : ""), "Upcoming rides rebalanced.");
     }, text: "Rebalance" })));
 }
 
@@ -596,7 +694,7 @@ function openSettings() {
       h("div", { class: "row" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }), h("button", { class: "btn primary", onclick: async () => {
         ps = ps.filter(p => p.name.trim()).map(p => ({ id: p.id, name: p.name.trim(), active: p.active !== false }));
         ks = ks.filter(k => k.name.trim()).map(k => ({ id: k.id || uid("k_"), name: k.name.trim(), address: (k.address || "").trim() }));
-        closeDlg(); await write(() => updCarpool({ name: name.value.trim() || "Carpool", location: loc.value.trim(), startTime: st.value, endTime: en.value, parents: ps, kids: ks }), "Settings saved.");
+        closeDlg(); await changeCarpool({ name: name.value.trim() || "Carpool", location: loc.value.trim(), startTime: st.value, endTime: en.value, parents: ps, kids: ks });
       }, text: "Save" }))));
 }
 

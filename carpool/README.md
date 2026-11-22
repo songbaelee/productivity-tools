@@ -31,6 +31,14 @@ carpools/{carpoolId}/rides/{YYYY-MM-DD}
 
 `to` and `home` are parent ids, and are empty strings on cancelled days. Times and dates are stored as strings.
 
+```
+carpools/{carpoolId}/log/{autoId}
+                                { at (server time), by, kind, summary,
+                                  changes: [{doc, before, after}] }
+```
+
+Every change made on the page (and every Undo) writes a log entry in the same batch as the change. `by` is the viewer's "I am…" choice, or empty. `changes` holds the old and new values of the fields that changed, including notes and pickup addresses, so those stay in the log even after they're edited on the page.
+
 ## Firebase setup (already done for this project)
 
 1. In the [Firebase console](https://console.firebase.google.com/), create a project.
@@ -49,6 +57,7 @@ What the rules allow:
 
 - `carpools/{id}`: anyone can read or update one carpool by its id. Creating needs an id of at least 20 characters. Listing and deleting carpools are denied.
 - `carpools/{id}/rides/{date}`: anyone can read and write. Writes need the carpool to exist, the document id to be the ride's `date`, and the expected field types. Notes are limited to 500 characters.
+- `carpools/{id}/log/{entry}`: the change log. Anyone with the carpool's id can read it and add entries, but entries can't be edited or deleted (only from the Firebase console). Each entry must carry the server's time, so it can't be backdated. Logs can only be listed under a known carpool id.
 - Everything else is denied.
 
 ## Recommended: restrict the API key

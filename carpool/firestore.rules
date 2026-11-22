@@ -30,6 +30,17 @@ service cloud.firestore {
         && (!('updatedAt' in d) || (d.updatedAt is string && d.updatedAt.size() <= 40));
     }
 
+    // A change-log entry. `at` must be the server's time of the write, so it can't be backdated.
+    function validLog(d) {
+      return d.keys().hasOnly(['at', 'by', 'kind', 'summary', 'changes'])
+        && d.keys().hasAll(['at', 'by', 'kind', 'summary', 'changes'])
+        && d.at == request.time
+        && d.by is string && d.by.size() <= 60
+        && d.kind is string && d.kind.size() <= 20
+        && d.summary is string && d.summary.size() <= 1000
+        && d.changes is list && d.changes.size() <= 100;
+    }
+
     match /carpools/{cid} {
       allow get: if true;
       allow create: if cid.size() >= 20 && validCarpool(request.resource.data);
@@ -43,6 +54,16 @@ service cloud.firestore {
         allow create, update: if existsAfter(/databases/$(database)/documents/carpools/$(cid))
           && validRide(rideId, request.resource.data);
         allow delete: if true;
+      }
+
+      // Change log: anyone with the carpool's id can read it and add to it, nobody can
+      // edit or delete entries. There's no collection-group rule, so logs can only be
+      // listed under a known carpool id.
+      match /log/{entryId} {
+        allow read: if true;
+        allow create: if existsAfter(/databases/$(database)/documents/carpools/$(cid))
+          && validLog(request.resource.data);
+        allow update, delete: if false;
       }
     }
   }
