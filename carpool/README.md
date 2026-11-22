@@ -24,14 +24,14 @@ Opening the page with no `#...` shows "Open your carpool's link, or create a new
 ```
 carpools/{carpoolId}            { name, location, startTime, endTime,
                                   parents: [{id, name, active}],
-                                  kids: [{id, name, address}], createdAt }
+                                  kids: [{id, name, address}], createdAt, useWeights? }
 carpools/{carpoolId}/rides/{YYYY-MM-DD}
                                 { date, to, home, cancelled, note, updatedAt, weight? }
 ```
 
 `to` and `home` are parent ids, and are empty strings on cancelled days. Times and dates are stored as strings.
 
-`weight` is optional (a number from 0.5 to 5; missing means 1). It's set with "Counts as" in a day's ✎ dialog, and each leg of that ride counts that many legs in the tally and in Rebalance. Days with a weight other than 1 show it next to the date (e.g. "×2"). Setting it back to 1 removes the field.
+`weight` is optional (a number from 0.5 to 5; missing means 1). It only counts when the carpool's `useWeights` is true (the "Use ride weights" switch in Settings, off by default); when it's off, every ride counts as 1 and no weights are shown, but stored weights are kept. It's set with "Counts as" in a day's ✎ dialog, and each leg of that ride counts that many legs in the tally and in Rebalance. Days with a weight other than 1 show it next to the date (e.g. "×2"). Setting it back to 1 removes the field.
 
 ```
 carpools/{carpoolId}/log/{autoId}
@@ -57,7 +57,7 @@ Do this again whenever `firestore.rules` changes. (With the Firebase CLI install
 
 What the rules allow:
 
-- `carpools/{id}`: anyone can read or update one carpool by its id. Creating needs an id of at least 20 characters. Listing and deleting carpools are denied.
+- `carpools/{id}`: anyone can read or update one carpool by its id. Creating needs an id of at least 20 characters. The optional `useWeights` must be true or false. Listing and deleting carpools are denied.
 - `carpools/{id}/rides/{date}`: anyone can read and write. Writes need the carpool to exist, the document id to be the ride's `date`, and the expected field types. Notes are limited to 500 characters, and the optional `weight` must be a number from 0.5 to 5.
 - `carpools/{id}/log/{entry}`: the change log. Anyone with the carpool's id can read it and add entries, but entries can't be edited or deleted (only from the Firebase console). Each entry must carry the server's time, so it can't be backdated. Logs can only be listed under a known carpool id.
 - Everything else is denied.

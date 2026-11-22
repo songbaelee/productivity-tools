@@ -282,7 +282,9 @@ const rideData = r => { const d = Object.assign({}, r); delete d.id; return d; }
 const edited = (r, patch) => Object.assign(rideData(rides.find(x => x.id === r.id) || r), patch, { updatedAt: new Date().toISOString() });
 // A ride's weight: how many legs each of its two drives counts as (1 when not set).
 const W_MIN = 0.5, W_MAX = 5;
-const weightOf = r => typeof r.weight === "number" ? r.weight : 1;
+// Weights only count when the carpool has "Use ride weights" on; stored weights are kept either way.
+const weightsOn = () => !!(cp() && cp().useWeights === true);
+const weightOf = r => weightsOn() && typeof r.weight === "number" ? r.weight : 1;
 const fmtN = n => String(Math.round(n * 10) / 10);
 const wTag = r => weightOf(r) !== 1 ? h("span", { class: "wt", title: "Counts as " + fmtN(weightOf(r)) + " rides", text: "×" + fmtN(weightOf(r)) }) : null;
 const legName = leg => leg === "to" ? "drive there" : "drive back";
@@ -370,6 +372,7 @@ function settingsSummary(c, patch, keys) {
     });
     was.filter(o => !now.some(k => k.id === o.id)).forEach(o => parts.push("removed " + o.name));
   }
+  if (keys.includes("useWeights")) parts.push("ride weights turned " + (patch.useWeights ? "on" : "off"));
   return "Settings: " + (parts.join("; ") || "updated");
 }
 
@@ -556,7 +559,7 @@ function renderKids() {
 }
 
 // ---------- interactions ----------
-function openDlg(...children) { dlgBody.replaceChildren(...children); if (!dlg.open) dlg.showModal(); }
+function openDlg(...children) { dlgBody.replaceChildren(...children.filter(c => c != null && c !== false)); if (!dlg.open) dlg.showModal(); }
 function closeDlg() { if (dlg.open) dlg.close(); }
 dlg.addEventListener("click", e => { if (e.target === dlg) closeDlg(); });
 
@@ -610,6 +613,7 @@ async function onChip(r, leg) {
 function openRide(r) {
   const note = h("textarea", { id: "noteIn", maxlength: "500", placeholder: "e.g. One kid is out sick, no pickup needed", value: r.note || "" });
   const skip = h("input", { type: "checkbox", id: "skipIn", checked: !!r.cancelled });
+  const wOn = weightsOn();
   const wIn = h("input", { type: "number", id: "weightIn", min: String(W_MIN), max: String(W_MAX), step: "0.5", value: String(weightOf(r)), style: "width:90px" });
   const err = h("p", { class: "status err", hidden: true });
   openDlg(
@@ -620,9 +624,9 @@ function openRide(r) {
       closeDlg(); await change([[r.id, edited(r, { note: "" })]], "note", fmtMD(r.date) + ": note removed (was " + quote(r.note) + ")", "Note removed.");
     }, text: "Remove note" })) : null,
     h("p", { class: "help", text: "Skipped days stay on the list but don't count toward anyone's total." }),
-    h("div", { class: "row" }, h("label", { class: "field", for: "weightIn" }, "Counts as", h("span", { class: "row" }, wIn, h("span", { class: "help", text: "rides" })))),
-    h("p", { class: "help", text: "For a longer or harder trip, e.g. 2 makes each leg count double in the totals. Leave at 1 for a normal ride." }),
-    err,
+    wOn ? h("div", { class: "row" }, h("label", { class: "field", for: "weightIn" }, "Counts as", h("span", { class: "row" }, wIn, h("span", { class: "help", text: "rides" })))) : null,
+    wOn ? h("p", { class: "help", text: "For a longer or harder trip, e.g. 2 makes each leg count double in the totals. Leave at 1 for a normal ride." }) : null,
+    wOn ? err : null,
     h("div", { class: "row", style: "justify-content:space-between" },
       h("button", { class: "btn danger", onclick: () => confirmBox("Remove " + fmtShort(r.date) + " from the season?", "Remove date", async () => {
         await change([[r.id, null]], "remove-date", "Removed " + fmtMD(r.date) + (r.cancelled ? " (no practice)" : " (" + pname(r.to) + " there, " + pname(r.home) + " back)"), "Date removed.");
@@ -630,7 +634,7 @@ function openRide(r) {
       h("div", { class: "row" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }),
         h("button", { class: "btn primary", onclick: async () => {
           const data = {}, parts = [], was = r.note || "";
-          const wNew = wIn.value.trim() === "" ? 1 : Number(wIn.value), wOld = weightOf(r);
+          const wOld = weightOf(r), wNew = !wOn ? wOld : wIn.value.trim() === "" ? 1 : Number(wIn.value);
           if (!Number.isFinite(wNew) || wNew < W_MIN || wNew > W_MAX) { err.hidden = false; err.textContent = "“Counts as” must be a number from " + W_MIN + " to " + W_MAX + "."; wIn.focus(); return; }
           if (was !== note.value) {
             data.note = note.value;
@@ -692,6 +696,7 @@ function openSettings() {
   const loc = h("input", { type: "text", id: "sLoc", maxlength: "200", value: c.location || "" });
   const st = h("input", { type: "time", id: "sStart", value: c.startTime || "" });
   const en = h("input", { type: "time", id: "sEnd", value: c.endTime || "" });
+  const uw = h("input", { type: "checkbox", id: "sWeights", checked: c.useWeights === true });
   const pList = h("div", { class: "list" }), kList = h("div", { class: "list" });
   function drawP() {
     pList.replaceChildren(...ps.map((p, i) => h("div", { class: "item" },
@@ -712,11 +717,15 @@ function openSettings() {
     h("div", { class: "row" }, h("label", { class: "field", for: "sStart" }, "Starts", st), h("label", { class: "field", for: "sEnd" }, "Ends", en)),
     h("div", null, h("strong", { text: "Parents who drive" }), h("p", { class: "help", text: "Untick someone who has stopped driving; their past rides stay on record. After adding or removing a driver, use Rebalance so the new rotation is even." }), pList),
     h("div", null, h("strong", { text: "Kids" }), kList),
+    h("div", null, h("label", { class: "row", for: "sWeights" }, uw, h("strong", { text: "Use ride weights" })),
+      h("p", { class: "help", text: "Lets a day count as more (or less) than one ride, set with “Counts as” in that day's ✎. When off, every ride counts as 1; weights already set are kept for if you turn it back on." })),
     h("div", { class: "row", style: "justify-content:space-between" }, h("button", { class: "btn", onclick: () => { closeDlg(); setTimeout(openRebalance, 0); }, text: "Rebalance upcoming…" }),
       h("div", { class: "row" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }), h("button", { class: "btn primary", onclick: async () => {
         ps = ps.filter(p => p.name.trim()).map(p => ({ id: p.id, name: p.name.trim(), active: p.active !== false }));
         ks = ks.filter(k => k.name.trim()).map(k => ({ id: k.id || uid("k_"), name: k.name.trim(), address: (k.address || "").trim() }));
-        closeDlg(); await changeCarpool({ name: name.value.trim() || "Carpool", location: loc.value.trim(), startTime: st.value, endTime: en.value, parents: ps, kids: ks });
+        const patch = { name: name.value.trim() || "Carpool", location: loc.value.trim(), startTime: st.value, endTime: en.value, parents: ps, kids: ks };
+        if (uw.checked !== (c.useWeights === true)) patch.useWeights = uw.checked; // only written when switched, so other carpools stay as they are
+        closeDlg(); await changeCarpool(patch);
       }, text: "Save" }))));
 }
 

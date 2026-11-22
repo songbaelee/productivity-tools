@@ -6,8 +6,9 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // `useWeights` is optional: whether ride weights count in this carpool (missing means off).
     function validCarpool(d) {
-      return d.keys().hasOnly(['name', 'location', 'startTime', 'endTime', 'parents', 'kids', 'createdAt'])
+      return d.keys().hasOnly(['name', 'location', 'startTime', 'endTime', 'parents', 'kids', 'createdAt', 'useWeights'])
         && d.keys().hasAll(['name', 'location', 'startTime', 'endTime', 'parents', 'kids', 'createdAt'])
         && d.name is string && d.name.size() <= 100
         && d.location is string && d.location.size() <= 200
@@ -15,7 +16,8 @@ service cloud.firestore {
         && d.endTime is string && d.endTime.size() <= 8
         && d.parents is list && d.parents.size() <= 30
         && d.kids is list && d.kids.size() <= 50
-        && d.createdAt is string && d.createdAt.size() <= 40;
+        && d.createdAt is string && d.createdAt.size() <= 40
+        && (!('useWeights' in d) || d.useWeights is bool);
     }
 
     // `weight` is optional: how many legs each drive on that day counts as (missing means 1).
