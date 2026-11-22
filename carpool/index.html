@@ -111,7 +111,8 @@ button.chip:hover { border-color: var(--accent); }
 
 .status { font-size: 14px; color: var(--muted); }
 .status.err { color: var(--warn); }
-.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 9px 16px; border-radius: 999px; font-size: 14px; z-index: 20; }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 9px 16px; border-radius: 999px; font-size: 14px; z-index: 20; display: flex; gap: 14px; align-items: center; max-width: calc(100vw - 32px); }
+.toast button { background: none; border: none; color: inherit; font-weight: 700; text-decoration: underline; padding: 0; }
 
 dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; background: var(--surface); color: var(--ink); width: min(520px, calc(100vw - 32px)); }
 dialog::backdrop { background: rgba(0,0,0,.4); }
@@ -199,10 +200,12 @@ function newCarpoolId() {
 function store(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} }
 function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 let toastTimer;
-function toast(msg) {
+function toast(msg, onUndo) {
   document.querySelectorAll(".toast").forEach(t => t.remove());
-  const t = h("div", { class: "toast", role: "status", text: msg }); document.body.append(t);
-  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.remove(), 2600);
+  const t = h("div", { class: "toast", role: "status" }, h("span", { text: msg }),
+    onUndo ? h("button", { onclick: () => { t.remove(); onUndo(); }, text: "Undo" }) : null);
+  document.body.append(t);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.remove(), onUndo ? 8000 : 2600);
 }
 
 // ---------- state ----------
@@ -235,6 +238,7 @@ function openFromHash() {
   if (unsubRides) unsubRides();
   unsubCarpool = unsubRides = null;
   currentId = idFromHash(); carpool = null; carpoolLoaded = false; rides = []; ridesLoaded = false; loadError = null; swapFrom = null;
+  lastUndo = null; document.querySelectorAll(".toast").forEach(t => t.remove());
   closeDlg();
   render();
   if (!currentId) return;
@@ -261,6 +265,27 @@ async function write(fn, okMsg) {
   }
 }
 const updRide = (id, data) => updateDoc(rideRef(id), Object.assign({}, data, { updatedAt: new Date().toISOString() }));
+
+// One level of undo: before a change, remember the rides it touches exactly as they were
+// (null for a ride that didn't exist yet), and put them back if Undo is pressed.
+let lastUndo = null;          // {cid, before: [[rideId, data | null]]}
+async function change(rideIds, fn, okMsg) {
+  const before = rideIds.map(id => { const r = rides.find(x => x.id === id); if (!r) return [id, null]; const data = Object.assign({}, r); delete data.id; return [id, data]; });
+  const cid = currentId;
+  if (!await write(fn)) return false;
+  const u = lastUndo = { cid, before };
+  toast(okMsg, () => undo(u));
+  return true;
+}
+async function undo(u) {
+  if (lastUndo !== u) return;
+  lastUndo = null;
+  await write(() => {
+    const wb = writeBatch(db);
+    for (const [id, data] of u.before) { const ref = doc(db, "carpools", u.cid, "rides", id); if (data) wb.set(ref, data); else wb.delete(ref); }
+    return wb.commit();
+  }, "Undone.");
+}
 const updCarpool = data => updateDoc(doc(db, "carpools", currentId), data);
 
 // ---------- logic ----------
@@ -389,7 +414,7 @@ function renderTally() {
       h("div", { class: "fig num" }, tot + " legs", h("span", { class: "diff " + cls, text: Math.abs(d) < 1 ? "even" : (d > 0 ? "+" : "") + d }))));
   });
   const spread = totals.length ? Math.max(...totals) - Math.min(...totals) : 0;
-  if (spread > 1) sec.append(h("p", { class: "help" }, "Totals are " + spread + " legs apart. ", h("button", { class: "linkish", onclick: openRebalance, text: "Rebalance upcoming rides" })));
+  if (spread >= 2) sec.append(h("p", { class: "help" }, "Totals are " + spread + " legs apart. ", h("button", { class: "linkish", onclick: openRebalance, text: "Rebalance upcoming rides" })));
   return sec;
 }
 
@@ -459,12 +484,9 @@ async function onChip(r, leg) {
     if (!a || (a.id === b.id && la === lb)) { render(); return; }
     const pa = a[la], pb = b[lb];
     if (pa === pb) { render(); toast("Same driver on both rides, nothing to swap."); return; }
-    if (a.id === b.id) { await write(() => updRide(a.id, { [la]: pb, [lb]: pa }), "Swapped."); return; }
-    if ((lb === "to" ? b.home : b.to) === pa || (la === "to" ? a.home : a.to) === pb) {
-      render(); toast("That trade would put one person on both legs of a day."); return;
-    }
+    if (a.id === b.id) { await change([a.id], () => updRide(a.id, { [la]: pb, [lb]: pa }), "Swapped."); return; }
     const now = new Date().toISOString();
-    await write(() => {
+    await change([a.id, b.id], () => {
       const wb = writeBatch(db);
       wb.update(rideRef(a.id), { [la]: pb, updatedAt: now });
       wb.update(rideRef(b.id), { [lb]: pa, updatedAt: now });
@@ -472,7 +494,7 @@ async function onChip(r, leg) {
     }, pname(pa) + " and " + pname(pb) + " traded rides.");
     return;
   }
-  const cur = r[leg], other = r[leg === "to" ? "home" : "to"];
+  const cur = r[leg];
   openDlg(
     h("h3", { text: (leg === "to" ? "Drive there" : "Drive back") + " · " + fmtLong(r.date) }),
     h("p", { class: "help", text: "Hand this ride to someone else. Totals update right away." }),
@@ -480,9 +502,7 @@ async function onChip(r, leg) {
       class: "btn" + (p.id === cur ? " current" : ""), "aria-pressed": p.id === cur ? "true" : "false",
       onclick: async () => {
         if (p.id === cur) { closeDlg(); return; }
-        const data = { [leg]: p.id };
-        if (p.id === other) data[leg === "to" ? "home" : "to"] = cur; // swap legs within the day
-        closeDlg(); await write(() => updRide(r.id, data), p.name + " is driving " + (leg === "to" ? "there" : "back") + " on " + fmtShort(r.date) + ".");
+        closeDlg(); await change([r.id], () => updRide(r.id, { [leg]: p.id }), p.name + " is driving " + (leg === "to" ? "there" : "back") + " on " + fmtShort(r.date) + ".");
       }, text: p.name }))),
     h("div", { class: "row" }, h("button", { class: "btn", onclick: () => { swapFrom = { rideId: r.id, leg }; closeDlg(); render(); }, text: "Trade with another ride…" })),
     h("div", { class: "row end" }, h("button", { class: "btn", onclick: closeDlg, text: "Close" })));
@@ -495,13 +515,14 @@ function openRide(r) {
     h("h3", { text: fmtLong(r.date) }),
     h("label", { class: "field", for: "noteIn" }, "Note for the drivers", note),
     h("label", { class: "row", for: "skipIn" }, skip, "No practice this day (skip it)"),
+    r.note ? h("div", { class: "row" }, h("button", { class: "btn small", onclick: async () => { closeDlg(); await change([r.id], () => updRide(r.id, { note: "" }), "Note removed."); }, text: "Remove note" })) : null,
     h("p", { class: "help", text: "Skipped days stay on the list but don't count toward anyone's total." }),
     h("div", { class: "row", style: "justify-content:space-between" },
-      h("button", { class: "btn danger", onclick: () => confirmBox("Remove " + fmtShort(r.date) + " from the season?", "Remove date", async () => { await write(() => deleteDoc(rideRef(r.id)), "Date removed."); }), text: "Remove date" }),
+      h("button", { class: "btn danger", onclick: () => confirmBox("Remove " + fmtShort(r.date) + " from the season?", "Remove date", async () => { await change([r.id], () => deleteDoc(rideRef(r.id)), "Date removed."); }), text: "Remove date" }),
       h("div", { class: "row" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }),
         h("button", { class: "btn primary", onclick: async () => {
           const data = {}; if ((r.note || "") !== note.value) data.note = note.value; if (!!r.cancelled !== skip.checked) data.cancelled = skip.checked;
-          closeDlg(); if (Object.keys(data).length) await write(() => updRide(r.id, data), "Saved.");
+          closeDlg(); if (Object.keys(data).length) await change([r.id], () => updRide(r.id, data), "Saved.");
         }, text: "Save" }))));
 }
 
@@ -523,8 +544,7 @@ function openAddDate() {
     h("div", { class: "row end" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }), h("button", { class: "btn primary", onclick: async () => {
       if (!d.value) { err.textContent = "Pick a date."; return; }
       if (rides.some(x => x.id === d.value)) { err.textContent = "That date is already on the schedule."; return; }
-      if (to.value === home.value) { err.textContent = "Pick two different drivers."; return; }
-      closeDlg(); await write(() => setDoc(rideRef(d.value), { date: d.value, to: to.value, home: home.value, cancelled: false, note: "", updatedAt: new Date().toISOString() }), fmtShort(d.value) + " added.");
+      closeDlg(); await change([d.value], () => setDoc(rideRef(d.value), { date: d.value, to: to.value, home: home.value, cancelled: false, note: "", updatedAt: new Date().toISOString() }), fmtShort(d.value) + " added.");
     }, text: "Add" })));
 }
 
@@ -537,7 +557,7 @@ function openRebalance() {
     h("div", { class: "row end" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }), h("button", { class: "btn primary", onclick: async () => {
       closeDlg();
       const now = new Date().toISOString();
-      await write(() => {
+      await change(ch.map(c => c.id), () => {
         const wb = writeBatch(db);
         for (const c of ch) wb.update(rideRef(c.id), { to: c.to, home: c.home, updatedAt: now });
         return wb.commit();
