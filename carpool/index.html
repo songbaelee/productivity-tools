@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carpool Planner</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* Layout: one column, "next ride" first, then fairness tally, then the season list. Scoreboard type over a chalk-and-turf palette. */
+:root {
+  --bg: #f3f5f2;
+  --surface: #ffffff;
+  --ink: #17231d;
+  --muted: #5d6b63;
+  --line: #d9e0db;
+  --accent: #1f7a4d;
+  --accent-ink: #ffffff;
+  --accent-soft: #e2f1e8;
+  --warn: #a35a00;
+  --warn-soft: #fbefdc;
+  --me: #fff3b0;
+  --me-ink: #4a3b00;
+  --font-display: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101713; --surface: #18221c; --ink: #e6ede8; --muted: #9aaba1; --line: #2b3a31;
+    --accent: #4cc48a; --accent-ink: #08130d; --accent-soft: #1d3428; --warn: #f0a94a; --warn-soft: #3a2a12;
+    --me: #4a4115; --me-ink: #fff2b8; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101713; --surface: #18221c; --ink: #e6ede8; --muted: #9aaba1; --line: #2b3a31;
+  --accent: #4cc48a; --accent-ink: #08130d; --accent-soft: #1d3428; --warn: #f0a94a; --warn-soft: #3a2a12;
+  --me: #4a4115; --me-ink: #fff2b8; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 16px; line-height: 1.45; }
+.wrap { max-width: 860px; margin: 0 auto; padding: 20px 16px 64px; display: grid; gap: 20px; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 700; letter-spacing: .01em; margin: 0; text-wrap: balance; }
+h1 { font-size: 34px; line-height: 1.05; }
+h2 { font-size: 22px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.num { font-variant-numeric: tabular-nums; }
+button, select, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+header.top { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; justify-content: space-between; }
+.meta { color: var(--muted); font-size: 14px; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.field { display: grid; gap: 4px; font-size: 13px; color: var(--muted); }
+select, input[type=text], input[type=date], input[type=time], textarea {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; color: var(--ink);
+}
+textarea { width: 100%; min-height: 70px; resize: vertical; }
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 7px 12px; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 700; }
+.btn.danger { color: var(--warn); }
+.btn.small { padding: 4px 9px; font-size: 14px; }
+.linkish { background: none; border: none; color: var(--accent); padding: 0; text-decoration: underline; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.next { border: 2px solid var(--accent); display: grid; gap: 10px; }
+.next .when { font-family: var(--font-display); font-size: 28px; line-height: 1; }
+.next .legs { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }
+.next .leg { background: var(--accent-soft); border-radius: 8px; padding: 10px 12px; }
+.next .leg .lbl { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.next .leg .who { font-family: var(--font-display); font-size: 26px; }
+.note { background: var(--warn-soft); color: var(--ink); border-left: 4px solid var(--warn); padding: 6px 10px; border-radius: 4px; font-size: 14px; white-space: pre-wrap; }
+
+.tally { display: grid; gap: 10px; }
+.trow { display: grid; grid-template-columns: 110px 1fr 120px; gap: 12px; align-items: center; }
+.trow .name { font-weight: 700; overflow-wrap: anywhere; }
+.bar { display: flex; height: 18px; border-radius: 4px; overflow: hidden; background: var(--bg); border: 1px solid var(--line); }
+.bar .done { background: var(--accent); }
+.bar .up { background: var(--accent-soft); background-image: repeating-linear-gradient(45deg, transparent 0 5px, color-mix(in srgb, var(--accent) 25%, transparent) 5px 7px); }
+.trow .fig { font-size: 14px; color: var(--muted); text-align: right; }
+.diff { display: inline-block; min-width: 30px; text-align: center; border-radius: 999px; padding: 0 6px; font-size: 13px; font-weight: 700; margin-left: 6px; }
+.diff.even { background: var(--accent-soft); color: var(--accent); }
+.diff.over, .diff.under { background: var(--warn-soft); color: var(--warn); }
+.legend { display: flex; gap: 16px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+.sw { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -1px; margin-right: 4px; border: 1px solid var(--line); }
+
+.sched { display: grid; gap: 0; }
+.shead, .srow { display: grid; grid-template-columns: 92px 1fr 1fr 1fr 40px; gap: 8px; align-items: center; padding: 8px 4px; }
+.shead { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); border-bottom: 2px solid var(--line); }
+.srow { border-bottom: 1px solid var(--line); }
+.srow .date { font-weight: 700; }
+.srow .date small { display: block; font-weight: 400; font-size: 12px; color: var(--muted); }
+.srow.past { opacity: .5; }
+.srow.isnext { background: var(--accent-soft); border-radius: 8px; border-bottom-color: transparent; }
+.srow.cancelled .chips { grid-column: 2 / 5; color: var(--muted); font-style: italic; }
+.srow .notecell { grid-column: 2 / 5; }
+.chip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 3px 11px; font-size: 15px; max-width: 100%; overflow-wrap: anywhere; text-align: left; }
+button.chip:hover { border-color: var(--accent); }
+.chip.mine { background: var(--me); color: var(--me-ink); border-color: transparent; font-weight: 700; }
+.chip.off { border-style: dashed; color: var(--muted); }
+.chip.picked { outline: 3px solid var(--accent); }
+.mlabel { display: none; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.iconbtn { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; width: 36px; height: 32px; }
+.pill { display: inline-block; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; border-radius: 999px; padding: 1px 8px; background: var(--accent); color: var(--accent-ink); }
+
+.swapbar { position: sticky; top: 0; z-index: 5; background: var(--ink); color: var(--bg); padding: 10px 14px; border-radius: 10px; display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.swapbar .btn { background: transparent; color: var(--bg); border-color: var(--bg); }
+
+.status { font-size: 14px; color: var(--muted); }
+.status.err { color: var(--warn); }
+.toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 9px 16px; border-radius: 999px; font-size: 14px; z-index: 20; }
+
+dialog { border: 1px solid var(--line); border-radius: 14px; padding: 0; background: var(--surface); color: var(--ink); width: min(520px, calc(100vw - 32px)); }
+dialog::backdrop { background: rgba(0,0,0,.4); }
+.dlg { padding: 18px; display: grid; gap: 14px; }
+.dlg h3 { font-size: 24px; }
+.choices { display: flex; flex-wrap: wrap; gap: 8px; }
+.choices .btn.current { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.row.end { justify-content: flex-end; }
+.list { display: grid; gap: 8px; }
+.list .item { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; }
+.list .item.kid { grid-template-columns: 1fr 1.6fr auto; }
+.list input[type=text], .linkin { width: 100%; }
+.help { font-size: 13px; color: var(--muted); }
+details summary { cursor: pointer; font-weight: 700; }
+.kids { display: grid; gap: 4px; font-size: 14px; }
+
+@media (max-width: 600px) {
+  .shead { display: none; }
+  .srow { grid-template-columns: 1fr 1fr 40px; grid-template-areas: "date date edit" "to home ."; row-gap: 6px; }
+  .srow .date { grid-area: date; }
+  .srow .c-to { grid-area: to; } .srow .c-home { grid-area: home; } .srow .c-off { display: none; }
+  .srow .edit { grid-area: edit; }
+  .srow.cancelled .chips { grid-column: 1 / 3; }
+  .srow .notecell { grid-column: 1 / 3; }
+  .mlabel { display: block; }
+  .trow { grid-template-columns: 80px 1fr; }
+  .trow .fig { grid-column: 1 / 3; text-align: left; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <header class="top">
+    <div>
+      <h1 id="title">Carpool Planner</h1>
+      <div class="meta" id="sub"></div>
+    </div>
+    <div class="controls" id="topControls"></div>
+  </header>
+  <div id="main"><p class="status" id="status">Connecting to the shared schedule…</p></div>
+</div>
+
+<dialog id="dlg"><div class="dlg" id="dlgBody"></div></dialog>
+
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import { getFirestore, doc, collection, onSnapshot, setDoc, updateDoc, deleteDoc, writeBatch } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { firebaseConfig } from "./firebase-config.js";
+
+// ---------- helpers ----------
+function h(tag, attrs, ...kids) {
+  const el = document.createElement(tag);
+  if (attrs) for (const k in attrs) {
+    const v = attrs[k];
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "text") el.textContent = v;
+    else if (k === "value") el.value = v;
+    else if (k === "checked") el.checked = !!v;
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of kids.flat()) { if (c == null || c === false) continue; el.append(c.nodeType ? c : document.createTextNode(String(c))); }
+  return el;
+}
+const pad = n => String(n).padStart(2, "0");
+function todayStr() { const d = new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+function parseD(s) { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); }
+function isoOf(d) { return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function fmtShort(s) { const d = parseD(s); return DOW[d.getDay()] + " " + (d.getMonth() + 1) + "/" + d.getDate(); }
+function fmtLong(s) { const d = parseD(s); return ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][d.getDay()] + ", " + MON[d.getMonth()] + " " + d.getDate(); }
+function fmtTime(t) { if (!t) return ""; let [H, M] = t.split(":").map(Number); const ap = H >= 12 ? "pm" : "am"; H = H % 12 || 12; return H + (M ? ":" + pad(M) : "") + ap; }
+function daysUntil(s) { return Math.round((parseD(s) - parseD(todayStr())) / 86400000); }
+function uid(p) { return p + Math.random().toString(36).slice(2, 9); }
+// Carpool ids are the secret in the link: 24 random URL-safe characters (144 bits).
+function newCarpoolId() {
+  const abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+  return "c_" + Array.from(crypto.getRandomValues(new Uint8Array(24)), b => abc[b & 63]).join("");
+}
+function store(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (e) {} }
+function load(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+let toastTimer;
+function toast(msg) {
+  document.querySelectorAll(".toast").forEach(t => t.remove());
+  const t = h("div", { class: "toast", role: "status", text: msg }); document.body.append(t);
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.remove(), 2600);
+}
+
+// ---------- state ----------
+const db = getFirestore(initializeApp(firebaseConfig));
+let currentId = null;         // from location.hash
+let carpool = null, carpoolLoaded = false;
+let rides = [];               // [{id, ...data}] for current carpool, sorted by date
+let ridesLoaded = false, loadError = null;
+let unsubCarpool = null, unsubRides = null;
+let swapFrom = null;          // {rideId, leg}
+const dlg = document.getElementById("dlg"), dlgBody = document.getElementById("dlgBody");
+
+const cp = () => carpool;
+const parents = () => (cp() && Array.isArray(cp().parents)) ? cp().parents : [];
+const activeParents = () => parents().filter(p => p.active !== false);
+const pname = id => { const p = parents().find(x => x.id === id); return p ? (p.name || "Unnamed") : "—"; };
+const meId = () => load("cp.me." + currentId);
+const rideRef = id => doc(db, "carpools", currentId, "rides", id);
+
+// ---------- data ----------
+function idFromHash() {
+  let id = "";
+  try { id = decodeURIComponent(location.hash.slice(1)); } catch (e) {}
+  return /^[A-Za-z0-9_-]{20,128}$/.test(id) ? id : null;
+}
+
+// Subscribe to the carpool named in the link. The carpools collection itself is never listed or queried.
+function openFromHash() {
+  if (unsubCarpool) unsubCarpool();
+  if (unsubRides) unsubRides();
+  unsubCarpool = unsubRides = null;
+  currentId = idFromHash(); carpool = null; carpoolLoaded = false; rides = []; ridesLoaded = false; loadError = null; swapFrom = null;
+  closeDlg();
+  render();
+  if (!currentId) return;
+  const id = currentId;
+  const timer = setTimeout(() => { if (!carpoolLoaded) { loadError = "The schedule can't be reached yet. It will appear once the connection comes back."; render(); } }, 10000);
+  unsubCarpool = onSnapshot(doc(db, "carpools", id), snap => {
+    if (!snap.exists() && snap.metadata.fromCache) return; // wait for the server before saying "not found"
+    clearTimeout(timer);
+    carpool = snap.exists() ? snap.data() : null; carpoolLoaded = true; loadError = null; render();
+  }, e => { clearTimeout(timer); loadError = "Couldn't load this carpool (" + e.code + ")."; render(); });
+  unsubRides = onSnapshot(collection(db, "carpools", id, "rides"), snap => {
+    rides = snap.docs.map(d => Object.assign({ id: d.id }, d.data())).sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    ridesLoaded = true; render();
+  }, e => { loadError = "Couldn't load rides (" + e.code + ")."; render(); });
+}
+window.addEventListener("hashchange", openFromHash);
+
+async function write(fn, okMsg) {
+  try { await fn(); if (okMsg) toast(okMsg); return true; }
+  catch (e) {
+    if (e && e.code === "permission-denied") toast("Couldn't save: the change was rejected. Check what you entered and try again.");
+    else toast("Couldn't save: " + ((e && e.message) || "try again"));
+    return false;
+  }
+}
+const updRide = (id, data) => updateDoc(rideRef(id), Object.assign({}, data, { updatedAt: new Date().toISOString() }));
+const updCarpool = data => updateDoc(doc(db, "carpools", currentId), data);
+
+// ---------- logic ----------
+function tally() {
+  const t = {}; activeParents().forEach(p => t[p.id] = { done: 0, up: 0 });
+  parents().forEach(p => { if (!t[p.id]) t[p.id] = { done: 0, up: 0, inactive: true }; });
+  const today = todayStr();
+  rides.forEach(r => {
+    if (r.cancelled) return;
+    ["to", "home"].forEach(leg => { const id = r[leg]; if (!id || !t[id]) return; if (r.date < today) t[id].done++; else t[id].up++; });
+  });
+  return t;
+}
+
+// Assign upcoming, non-cancelled rides so totals end up as even as possible.
+function planRebalance() {
+  const today = todayStr(), act = activeParents();
+  if (act.length < 2) return [];
+  const total = {}, toN = {}, last = {};
+  act.forEach((p, i) => { total[p.id] = 0; toN[p.id] = 0; last[p.id] = -1 - i; });
+  rides.forEach((r, i) => {
+    if (r.cancelled || r.date >= today) return;
+    ["to", "home"].forEach(leg => { if (total[r[leg]] != null) { total[r[leg]]++; if (leg === "to") toN[r[leg]]++; last[r[leg]] = i; } });
+  });
+  const order = act.map(p => p.id), changes = [];
+  rides.forEach((r, i) => {
+    if (r.cancelled || r.date < today) return;
+    const ranked = order.slice().sort((a, b) => total[a] - total[b] || last[a] - last[b] || order.indexOf(a) - order.indexOf(b));
+    let [a, b] = ranked;
+    let to = toN[a] <= toN[b] ? a : b, home = to === a ? b : a;
+    total[a]++; total[b]++; toN[to]++; last[a] = i; last[b] = i;
+    if (r.to !== to || r.home !== home) changes.push({ id: r.id, to, home });
+  });
+  return changes;
+}
+
+// ---------- render ----------
+function setHeader(title, sub) {
+  document.getElementById("title").textContent = title;
+  document.getElementById("sub").textContent = sub;
+  document.title = title === "Carpool Planner" ? title : title + " · Carpool Planner";
+}
+
+function render() {
+  const main = document.getElementById("main"), top = document.getElementById("topControls");
+  top.replaceChildren(); main.replaceChildren();
+
+  if (!currentId) {
+    setHeader("Carpool Planner", "");
+    main.append(h("div", { class: "card" },
+      location.hash.length > 1 ? h("p", { class: "status err", text: "That link doesn't look like a carpool link. Check that you copied all of it." }) : null,
+      h("p", { text: "Open your carpool's link, or create a new carpool." }),
+      h("button", { class: "btn primary", onclick: openNewCarpool, text: "New carpool" })));
+    return;
+  }
+
+  if (!carpoolLoaded) {
+    setHeader("Carpool Planner", "");
+    main.append(h("p", { class: "status" + (loadError ? " err" : ""), text: loadError || "Connecting to the shared schedule…" }));
+    return;
+  }
+
+  if (!carpool) {
+    setHeader("Carpool Planner", "");
+    main.append(h("div", { class: "card" },
+      h("p", { text: "There's no carpool at this link. Check that you have the whole link, or create a new carpool." }),
+      h("button", { class: "btn primary", onclick: openNewCarpool, text: "New carpool" })));
+    return;
+  }
+
+  const c = cp();
+  setHeader(c.name || "Carpool", [c.location, c.startTime ? fmtTime(c.startTime) + (c.endTime ? "–" + fmtTime(c.endTime) : "") : ""].filter(Boolean).join(" · "));
+
+  const meSel = h("select", { id: "meSel", "aria-label": "I am", onchange: e => { store("cp.me." + currentId, e.target.value || null); render(); } },
+    h("option", { value: "", text: "I am…" }), parents().map(p => h("option", { value: p.id, selected: meId() === p.id ? "selected" : null, text: p.name })));
+  top.append(meSel,
+    h("button", { class: "btn", onclick: copyLink, text: "Copy link" }),
+    h("button", { class: "btn", onclick: openSettings, text: "Settings" }),
+    h("button", { class: "btn", onclick: openNewCarpool, text: "New carpool" }));
+
+  if (loadError) main.append(h("p", { class: "status err", text: loadError }));
+  if (!ridesLoaded) { main.append(h("p", { class: "status", text: "Loading rides…" })); return; }
+
+  if (swapFrom) {
+    const r = rides.find(x => x.id === swapFrom.rideId);
+    main.append(h("div", { class: "swapbar", role: "status" },
+      h("span", { text: "Swapping " + pname(r && r[swapFrom.leg]) + "'s " + (swapFrom.leg === "to" ? "drive there" : "drive back") + " on " + (r ? fmtShort(r.date) : "") + ". Tap the ride to trade with." }),
+      h("button", { class: "btn small", onclick: () => { swapFrom = null; render(); }, text: "Cancel" })));
+  }
+
+  main.append(renderNext(), renderTally(), renderSchedule(), renderKids());
+}
+
+function renderNext() {
+  const today = todayStr();
+  const nx = rides.find(r => !r.cancelled && r.date >= today);
+  const card = h("section", { class: "card next", "aria-labelledby": "nextH" });
+  if (!nx) { card.append(h("h2", { id: "nextH", text: "Next ride" }), h("p", { text: "No upcoming rides. The season is done, or there are no dates yet." })); return card; }
+  const dd = daysUntil(nx.date), rel = dd === 0 ? "Today" : dd === 1 ? "Tomorrow" : "In " + dd + " days";
+  const c = cp();
+  card.append(
+    h("div", { class: "row", style: "justify-content:space-between" }, h("h2", { id: "nextH", text: "Next ride" }), h("span", { class: "pill", text: rel })),
+    h("div", { class: "when", text: fmtLong(nx.date) }),
+    h("div", { class: "legs" },
+      h("div", { class: "leg" }, h("div", { class: "lbl", text: "Drives there" + (c.startTime ? " · for " + fmtTime(c.startTime) : "") }), h("div", { class: "who", text: pname(nx.to) })),
+      h("div", { class: "leg" }, h("div", { class: "lbl", text: "Drives back" + (c.endTime ? " · at " + fmtTime(c.endTime) : "") }), h("div", { class: "who", text: pname(nx.home) }))),
+    nx.note ? h("div", { class: "note", text: nx.note }) : "");
+  return card;
+}
+
+function renderTally() {
+  const t = tally(), act = activeParents();
+  const totals = act.map(p => t[p.id].done + t[p.id].up), sum = totals.reduce((a, b) => a + b, 0);
+  const avg = act.length ? sum / act.length : 0, max = Math.max(1, ...totals);
+  const sec = h("section", { class: "card tally", "aria-labelledby": "tallyH" },
+    h("h2", { id: "tallyH", text: "Who's driving how much" }),
+    h("div", { class: "legend" }, h("span", null, h("span", { class: "sw", style: "background:var(--accent)" }), "Driven"), h("span", null, h("span", { class: "sw", style: "background:var(--accent-soft)" }), "Coming up"),
+      h("span", { text: "Even share: " + (Math.round(avg * 10) / 10) + " legs each" })));
+  act.forEach(p => {
+    const x = t[p.id], tot = x.done + x.up, d = Math.round((tot - avg) * 10) / 10;
+    const cls = Math.abs(d) < 1 ? "even" : d > 0 ? "over" : "under";
+    sec.append(h("div", { class: "trow" },
+      h("div", { class: "name", text: p.name }),
+      h("div", { class: "bar", role: "img", "aria-label": p.name + ": " + x.done + " driven, " + x.up + " coming up" },
+        h("div", { class: "done", style: "width:" + (x.done / max * 100) + "%" }), h("div", { class: "up", style: "width:" + (x.up / max * 100) + "%" })),
+      h("div", { class: "fig num" }, tot + " legs", h("span", { class: "diff " + cls, text: Math.abs(d) < 1 ? "even" : (d > 0 ? "+" : "") + d }))));
+  });
+  const spread = totals.length ? Math.max(...totals) - Math.min(...totals) : 0;
+  if (spread > 1) sec.append(h("p", { class: "help" }, "Totals are " + spread + " legs apart. ", h("button", { class: "linkish", onclick: openRebalance, text: "Rebalance upcoming rides" })));
+  return sec;
+}
+
+function chip(r, leg) {
+  const id = r[leg], mine = id && id === meId();
+  const cls = "chip" + (mine ? " mine" : "") + (swapFrom && swapFrom.rideId === r.id && swapFrom.leg === leg ? " picked" : "");
+  return h("button", { class: cls, onclick: () => onChip(r, leg), "aria-label": (leg === "to" ? "Drive there" : "Drive back") + " on " + fmtShort(r.date) + ": " + pname(id) + ". Change", text: pname(id) });
+}
+
+function renderSchedule() {
+  const today = todayStr(), nx = rides.find(r => !r.cancelled && r.date >= today);
+  const sec = h("section", { class: "card", "aria-labelledby": "schedH" },
+    h("div", { class: "row", style: "justify-content:space-between;margin-bottom:8px" }, h("h2", { id: "schedH", text: "Season" }),
+      h("button", { class: "btn small", onclick: openAddDate, text: "Add a date" })));
+  const list = h("div", { class: "sched" }, h("div", { class: "shead" }, h("span", { text: "Date" }), h("span", { text: "Drives there" }), h("span", { text: "Drives back" }), h("span", { text: "Off" }), h("span")));
+  if (!rides.length) list.append(h("p", { class: "help", text: "No dates yet. Add one, or set the season in Settings." }));
+  rides.forEach(r => {
+    const past = r.date < today, isNext = nx && nx.id === r.id;
+    const row = h("div", { class: "srow" + (past ? " past" : "") + (isNext ? " isnext" : "") + (r.cancelled ? " cancelled" : "") },
+      h("div", { class: "date num" }, fmtShort(r.date), h("small", { text: r.cancelled ? "No practice" : past ? "Done" : isNext ? "Next up" : "" })));
+    if (r.cancelled) row.append(h("div", { class: "chips", text: "Skipped" }));
+    else {
+      const off = activeParents().filter(p => p.id !== r.to && p.id !== r.home).map(p => p.name).join(", ");
+      row.append(h("div", { class: "c-to" }, h("span", { class: "mlabel", text: "There" }), chip(r, "to")),
+        h("div", { class: "c-home" }, h("span", { class: "mlabel", text: "Back" }), chip(r, "home")),
+        h("div", { class: "c-off" }, off ? h("span", { class: "chip off", text: off }) : null));
+    }
+    row.append(h("button", { class: "iconbtn edit", onclick: () => openRide(r), "aria-label": "Edit " + fmtShort(r.date) + ": note, skip or delete", text: "✎" }));
+    if (r.note) row.append(h("div", { class: "notecell" }, h("div", { class: "note", text: r.note })));
+    list.append(row);
+  });
+  sec.append(list);
+  sec.append(h("p", { class: "help", text: "Tap a name to hand that ride to someone else or trade it. Use ✎ to add a note (who's absent), skip a cancelled practice, or remove a date." }));
+  return sec;
+}
+
+function renderKids() {
+  const kids = (cp().kids || []);
+  return h("details", { class: "card" }, h("summary", { text: "Kids and pickup addresses (" + kids.length + ")" }),
+    h("div", { class: "kids", style: "margin-top:10px" }, kids.length ? kids.map(k => h("div", null, h("strong", { text: k.name }), k.address ? " · " + k.address : "")) : h("span", { class: "help", text: "None added yet. Add them in Settings." })));
+}
+
+// ---------- interactions ----------
+function openDlg(...children) { dlgBody.replaceChildren(...children); if (!dlg.open) dlg.showModal(); }
+function closeDlg() { if (dlg.open) dlg.close(); }
+dlg.addEventListener("click", e => { if (e.target === dlg) closeDlg(); });
+
+async function copyLink() {
+  const url = location.href;
+  try {
+    // Some browsers leave the clipboard promise pending instead of rejecting; fall back after a moment.
+    await Promise.race([navigator.clipboard.writeText(url), new Promise((_, no) => setTimeout(() => no(new Error("timeout")), 1500))]);
+    toast("Link copied. Anyone with it can view and edit this carpool.");
+  } catch (e) {
+    const inp = h("input", { type: "text", id: "linkIn", class: "linkin", readonly: true, value: url, onfocus: ev => ev.target.select() });
+    openDlg(h("h3", { text: "Share this carpool" }),
+      h("label", { class: "field", for: "linkIn" }, "Copy this link and send it to the other parents. Anyone with it can view and edit the schedule.", inp),
+      h("div", { class: "row end" }, h("button", { class: "btn", onclick: closeDlg, text: "Close" })));
+    inp.focus();
+  }
+}
+
+async function onChip(r, leg) {
+  if (swapFrom) {
+    const a = rides.find(x => x.id === swapFrom.rideId), b = r, la = swapFrom.leg, lb = leg;
+    swapFrom = null;
+    if (!a || (a.id === b.id && la === lb)) { render(); return; }
+    const pa = a[la], pb = b[lb];
+    if (pa === pb) { render(); toast("Same driver on both rides, nothing to swap."); return; }
+    if (a.id === b.id) { await write(() => updRide(a.id, { [la]: pb, [lb]: pa }), "Swapped."); return; }
+    if ((lb === "to" ? b.home : b.to) === pa || (la === "to" ? a.home : a.to) === pb) {
+      render(); toast("That trade would put one person on both legs of a day."); return;
+    }
+    const now = new Date().toISOString();
+    await write(() => {
+      const wb = writeBatch(db);
+      wb.update(rideRef(a.id), { [la]: pb, updatedAt: now });
+      wb.update(rideRef(b.id), { [lb]: pa, updatedAt: now });
+      return wb.commit();
+    }, pname(pa) + " and " + pname(pb) + " traded rides.");
+    return;
+  }
+  const cur = r[leg], other = r[leg === "to" ? "home" : "to"];
+  openDlg(
+    h("h3", { text: (leg === "to" ? "Drive there" : "Drive back") + " · " + fmtLong(r.date) }),
+    h("p", { class: "help", text: "Hand this ride to someone else. Totals update right away." }),
+    h("div", { class: "choices" }, activeParents().map(p => h("button", {
+      class: "btn" + (p.id === cur ? " current" : ""), "aria-pressed": p.id === cur ? "true" : "false",
+      onclick: async () => {
+        if (p.id === cur) { closeDlg(); return; }
+        const data = { [leg]: p.id };
+        if (p.id === other) data[leg === "to" ? "home" : "to"] = cur; // swap legs within the day
+        closeDlg(); await write(() => updRide(r.id, data), p.name + " is driving " + (leg === "to" ? "there" : "back") + " on " + fmtShort(r.date) + ".");
+      }, text: p.name }))),
+    h("div", { class: "row" }, h("button", { class: "btn", onclick: () => { swapFrom = { rideId: r.id, leg }; closeDlg(); render(); }, text: "Trade with another ride…" })),
+    h("div", { class: "row end" }, h("button", { class: "btn", onclick: closeDlg, text: "Close" })));
+}
+
+function openRide(r) {
+  const note = h("textarea", { id: "noteIn", maxlength: "500", placeholder: "e.g. One kid is out sick, no pickup needed", value: r.note || "" });
+  const skip = h("input", { type: "checkbox", id: "skipIn", checked: !!r.cancelled });
+  openDlg(
+    h("h3", { text: fmtLong(r.date) }),
+    h("label", { class: "field", for: "noteIn" }, "Note for the drivers", note),
+    h("label", { class: "row", for: "skipIn" }, skip, "No practice this day (skip it)"),
+    h("p", { class: "help", text: "Skipped days stay on the list but don't count toward anyone's total." }),
+    h("div", { class: "row", style: "justify-content:space-between" },
+      h("button", { class: "btn danger", onclick: () => confirmBox("Remove " + fmtShort(r.date) + " from the season?", "Remove date", async () => { await write(() => deleteDoc(rideRef(r.id)), "Date removed."); }), text: "Remove date" }),
+      h("div", { class: "row" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }),
+        h("button", { class: "btn primary", onclick: async () => {
+          const data = {}; if ((r.note || "") !== note.value) data.note = note.value; if (!!r.cancelled !== skip.checked) data.cancelled = skip.checked;
+          closeDlg(); if (Object.keys(data).length) await write(() => updRide(r.id, data), "Saved.");
+        }, text: "Save" }))));
+}
+
+function confirmBox(msg, label, fn) {
+  openDlg(h("h3", { text: msg }), h("div", { class: "row end" }, h("button", { class: "btn", onclick: closeDlg, text: "Keep it" }),
+    h("button", { class: "btn primary", onclick: async () => { closeDlg(); await fn(); }, text: label })));
+}
+
+function openAddDate() {
+  const last = rides.length ? parseD(rides[rides.length - 1].date) : new Date(); last.setDate(last.getDate() + 7);
+  const d = h("input", { type: "date", id: "newDate", value: isoOf(last) });
+  const act = activeParents();
+  const to = h("select", { id: "newTo" }, act.map(p => h("option", { value: p.id, text: p.name })));
+  const home = h("select", { id: "newHome" }, act.map((p, i) => h("option", { value: p.id, selected: i === 1 ? "selected" : null, text: p.name })));
+  const err = h("p", { class: "status err" });
+  openDlg(h("h3", { text: "Add a date" }),
+    h("div", { class: "row" }, h("label", { class: "field", for: "newDate" }, "Date", d), h("label", { class: "field", for: "newTo" }, "Drives there", to), h("label", { class: "field", for: "newHome" }, "Drives back", home)),
+    err,
+    h("div", { class: "row end" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }), h("button", { class: "btn primary", onclick: async () => {
+      if (!d.value) { err.textContent = "Pick a date."; return; }
+      if (rides.some(x => x.id === d.value)) { err.textContent = "That date is already on the schedule."; return; }
+      if (to.value === home.value) { err.textContent = "Pick two different drivers."; return; }
+      closeDlg(); await write(() => setDoc(rideRef(d.value), { date: d.value, to: to.value, home: home.value, cancelled: false, note: "", updatedAt: new Date().toISOString() }), fmtShort(d.value) + " added.");
+    }, text: "Add" })));
+}
+
+function openRebalance() {
+  const ch = planRebalance();
+  if (!ch.length) { openDlg(h("h3", { text: "Already balanced" }), h("p", { text: "The upcoming rides are already as even as they can be." }), h("div", { class: "row end" }, h("button", { class: "btn", onclick: closeDlg, text: "Close" }))); return; }
+  openDlg(h("h3", { text: "Rebalance upcoming rides" }),
+    h("p", { text: "This reassigns " + ch.length + " upcoming ride" + (ch.length > 1 ? "s" : "") + " so everyone ends the season with about the same number of legs. Past rides stay as they were. Let the group know, since people's dates will move." }),
+    h("div", { class: "kids" }, ch.slice(0, 8).map(c => { const r = rides.find(x => x.id === c.id); return h("div", { class: "num", text: fmtShort(r.date) + ": " + pname(c.to) + " there, " + pname(c.home) + " back" }); }), ch.length > 8 ? h("div", { class: "help", text: "…and " + (ch.length - 8) + " more" }) : null),
+    h("div", { class: "row end" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }), h("button", { class: "btn primary", onclick: async () => {
+      closeDlg();
+      const now = new Date().toISOString();
+      await write(() => {
+        const wb = writeBatch(db);
+        for (const c of ch) wb.update(rideRef(c.id), { to: c.to, home: c.home, updatedAt: now });
+        return wb.commit();
+      }, "Upcoming rides rebalanced.");
+    }, text: "Rebalance" })));
+}
+
+function openSettings() {
+  const c = cp();
+  let ps = parents().map(p => Object.assign({}, p)), ks = (c.kids || []).map(k => Object.assign({}, k));
+  const name = h("input", { type: "text", id: "sName", maxlength: "100", value: c.name || "" });
+  const loc = h("input", { type: "text", id: "sLoc", maxlength: "200", value: c.location || "" });
+  const st = h("input", { type: "time", id: "sStart", value: c.startTime || "" });
+  const en = h("input", { type: "time", id: "sEnd", value: c.endTime || "" });
+  const pList = h("div", { class: "list" }), kList = h("div", { class: "list" });
+  function drawP() {
+    pList.replaceChildren(...ps.map((p, i) => h("div", { class: "item" },
+      h("input", { type: "text", "aria-label": "Parent name", id: "pn" + i, maxlength: "60", value: p.name, oninput: e => p.name = e.target.value }),
+      h("label", { class: "row help", for: "pa" + i }, h("input", { type: "checkbox", id: "pa" + i, checked: p.active !== false, onchange: e => p.active = e.target.checked }), "Driving"))),
+      h("button", { class: "btn small", onclick: () => { ps.push({ id: uid("p_"), name: "", active: true }); drawP(); }, text: "Add a parent" }));
+  }
+  function drawK() {
+    kList.replaceChildren(...ks.map((k, i) => h("div", { class: "item kid" },
+      h("input", { type: "text", "aria-label": "Kid name", id: "kn" + i, maxlength: "60", value: k.name, oninput: e => k.name = e.target.value }),
+      h("input", { type: "text", "aria-label": "Pickup address", id: "ka" + i, maxlength: "200", value: k.address || "", placeholder: "Pickup address", oninput: e => k.address = e.target.value }),
+      h("button", { class: "btn small danger", onclick: () => { ks.splice(i, 1); drawK(); }, text: "Remove" }))),
+      h("button", { class: "btn small", onclick: () => { ks.push({ id: uid("k_"), name: "", address: "" }); drawK(); }, text: "Add a kid" }));
+  }
+  drawP(); drawK();
+  openDlg(h("h3", { text: "Carpool settings" }),
+    h("label", { class: "field", for: "sName" }, "Name", name), h("label", { class: "field", for: "sLoc" }, "Location", loc),
+    h("div", { class: "row" }, h("label", { class: "field", for: "sStart" }, "Starts", st), h("label", { class: "field", for: "sEnd" }, "Ends", en)),
+    h("div", null, h("strong", { text: "Parents who drive" }), h("p", { class: "help", text: "Untick someone who has stopped driving; their past rides stay on record. After adding or removing a driver, use Rebalance so the new rotation is even." }), pList),
+    h("div", null, h("strong", { text: "Kids" }), kList),
+    h("div", { class: "row", style: "justify-content:space-between" }, h("button", { class: "btn", onclick: () => { closeDlg(); setTimeout(openRebalance, 0); }, text: "Rebalance upcoming…" }),
+      h("div", { class: "row" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }), h("button", { class: "btn primary", onclick: async () => {
+        ps = ps.filter(p => p.name.trim()).map(p => ({ id: p.id, name: p.name.trim(), active: p.active !== false }));
+        ks = ks.filter(k => k.name.trim()).map(k => ({ id: k.id || uid("k_"), name: k.name.trim(), address: (k.address || "").trim() }));
+        closeDlg(); await write(() => updCarpool({ name: name.value.trim() || "Carpool", location: loc.value.trim(), startTime: st.value, endTime: en.value, parents: ps, kids: ks }), "Settings saved.");
+      }, text: "Save" }))));
+}
+
+function openNewCarpool() {
+  const nm = h("input", { type: "text", id: "nName", maxlength: "100", placeholder: "e.g. Swim team practice" });
+  const loc = h("input", { type: "text", id: "nLoc", maxlength: "200" });
+  const st = h("input", { type: "time", id: "nStart" }), en = h("input", { type: "time", id: "nEnd" });
+  const pp = h("textarea", { id: "nParents", placeholder: "One name per line" });
+  const d1 = h("input", { type: "date", id: "nFirst" }), d2 = h("input", { type: "date", id: "nLast" });
+  const err = h("p", { class: "status err" });
+  openDlg(h("h3", { text: "New carpool" }),
+    h("label", { class: "field", for: "nName" }, "Name", nm), h("label", { class: "field", for: "nLoc" }, "Location", loc),
+    h("div", { class: "row" }, h("label", { class: "field", for: "nStart" }, "Starts", st), h("label", { class: "field", for: "nEnd" }, "Ends", en)),
+    h("label", { class: "field", for: "nParents" }, "Parents who drive", pp),
+    h("div", { class: "row" }, h("label", { class: "field", for: "nFirst" }, "First date", d1), h("label", { class: "field", for: "nLast" }, "Last date", d2)),
+    h("p", { class: "help", text: "Repeats weekly on the first date's weekday. Drivers are rotated evenly; you can skip or move individual days afterwards. The carpool gets its own private link to share with the other parents." }),
+    err,
+    h("div", { class: "row end" }, h("button", { class: "btn", onclick: closeDlg, text: "Cancel" }), h("button", { class: "btn primary", onclick: async () => {
+      const names = pp.value.split("\n").map(s => s.trim().slice(0, 60)).filter(Boolean);
+      if (!nm.value.trim()) { err.textContent = "Give the carpool a name."; return; }
+      if (names.length < 2) { err.textContent = "Add at least two parents."; return; }
+      if (!d1.value || !d2.value || d2.value < d1.value) { err.textContent = "Pick a first and last date, in order."; return; }
+      const ps = names.map(n => ({ id: uid("p_"), name: n, active: true }));
+      const dates = []; for (let d = parseD(d1.value); isoOf(d) <= d2.value && dates.length < 60; d.setDate(d.getDate() + 7)) dates.push(isoOf(d));
+      const id = newCarpoolId(), now = new Date().toISOString();
+      closeDlg();
+      const ok = await write(() => {
+        const wb = writeBatch(db);
+        wb.set(doc(db, "carpools", id), { name: nm.value.trim(), location: loc.value.trim(), startTime: st.value, endTime: en.value, parents: ps, kids: [], createdAt: now });
+        for (let i = 0; i < dates.length; i++) {
+          const a = ps[(2 * i) % ps.length].id, b = ps[(2 * i + 1) % ps.length].id;
+          wb.set(doc(db, "carpools", id, "rides", dates[i]), { date: dates[i], to: a, home: b === a ? ps[(2 * i + 2) % ps.length].id : b, cancelled: false, note: "", updatedAt: now });
+        }
+        return wb.commit();
+      }, "Carpool created. Use Copy link to share it.");
+      if (ok) location.hash = id;
+    }, text: "Create" })));
+}
+
+document.addEventListener("keydown", e => { if (e.key === "Escape" && swapFrom) { swapFrom = null; render(); } });
+openFromHash();
+</script>
+</body>
+</html>
